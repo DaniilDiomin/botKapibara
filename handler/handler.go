@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"io/ioutil"
 	"log"
 	"net/http"
 )
@@ -33,6 +34,12 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		return
 	}
 
+	if update.Message.Photo != nil {
+		if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WriteoffTopicID, update.Message); err != nil {
+			log.Println(err)
+		}
+	}
+
 	switch userState.Current {
 	case state.Idle:
 		h.handleIdle(chatID)
@@ -48,7 +55,7 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		h.handleWorkSchedule(chatID, update.Message)
 	case state.WriteOff:
 		h.handleWriteOff(chatID, update.Message)
-	case state.RequestSubmission:
+	case state.RequestSubmission: h.handleRequestSubmission(chatID, update.Message)
 	}
 }
 
@@ -179,7 +186,7 @@ func (h *Handler) handleRogachevSelection(chatID int64, message *tgbotapi.Messag
 	case "Списание":
 		h.handleWriteOff(chatID, message)
 	case "Заявка":
-		//
+		h.handleRequestSubmission(chatID, message)
 	case "Назад":
 		h.toRestarauntSelection(chatID, message)
 	default:
@@ -218,7 +225,7 @@ func (h *Handler) handleFreshcoffSelection(chatID int64, message *tgbotapi.Messa
 	case "Списание":
 		h.handleWriteOff(chatID, message)
 	case "Заявка":
-		//
+		h.handleRequestSubmission(chatID, message)
 	case "Назад":
 		h.toRestarauntSelection(chatID, message)
 	default:
@@ -257,7 +264,7 @@ func (h *Handler) handleRechicaSelection(chatID int64, message *tgbotapi.Message
 	case "Списание":
 		h.handleWriteOff(chatID, message)
 	case "Заявка":
-		//
+		h.handleRequestSubmission(chatID, message)
 	case "Назад":
 		h.toRestarauntSelection(chatID, message)
 	default:
@@ -314,18 +321,16 @@ func (h *Handler) handleWorkSchedule(chatID int64, message *tgbotapi.Message) {
 
 		switch message.Text {
 		case "На работе":
-			forwardMsg := fmt.Sprintf("@%s %s", message.Chat.UserName, message.Text)
-			if err := h.sendMsgInTopic(h.config.Kapibara.GroupChatID, h.config.Kapibara.WorkHoursTopicID, forwardMsg); err != nil {
+			if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, message); err != nil {
 				log.Println(err)
 			}
-			h.toRechicaSelection(chatID, message)
+			h.toFreshcoffSelection(chatID, message)
 			h.stateManager.SetContext(chatID, "is_work", "1")
 		case "Окончил смену":
-			forwardMsg := fmt.Sprintf("@%s %s", message.Chat.UserName, message.Text)
-			if err := h.sendMsgInTopic(h.config.Kapibara.GroupChatID, h.config.Kapibara.WorkHoursTopicID, forwardMsg); err != nil {
+			if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, message); err != nil {
 				log.Println(err)
 			}
-			h.toRechicaSelection(chatID, message)
+			h.toFreshcoffSelection(chatID, message)
 			h.stateManager.SetContext(chatID, "is_work", "")
 		case "Назад":
 			h.toRechicaSelection(chatID, message)
@@ -349,18 +354,16 @@ func (h *Handler) handleWorkSchedule(chatID int64, message *tgbotapi.Message) {
 
 		switch message.Text {
 		case "На работе":
-			forwardMsg := fmt.Sprintf("@%s %s", message.Chat.UserName, message.Text)
-			if err := h.sendMsgInTopic(h.config.Kapibara.GroupChatID, h.config.Kapibara.WorkHoursTopicID, forwardMsg); err != nil {
+			if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, message); err != nil {
 				log.Println(err)
 			}
-			h.toRogachevSelection(chatID, message)
+			h.toFreshcoffSelection(chatID, message)
 			h.stateManager.SetContext(chatID, "is_work", "1")
 		case "Окончил смену":
-			forwardMsg := fmt.Sprintf("@%s %s", message.Chat.UserName, message.Text)
-			if err := h.sendMsgInTopic(h.config.Kapibara.GroupChatID, h.config.Kapibara.WorkHoursTopicID, forwardMsg); err != nil {
+			if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, message); err != nil {
 				log.Println(err)
 			}
-			h.toRogachevSelection(chatID, message)
+			h.toFreshcoffSelection(chatID, message)
 			h.stateManager.SetContext(chatID, "is_work", "")
 		case "Назад":
 			h.toRogachevSelection(chatID, message)
@@ -384,15 +387,13 @@ func (h *Handler) handleWorkSchedule(chatID int64, message *tgbotapi.Message) {
 
 		switch message.Text {
 		case "На работе":
-			forwardMsg := fmt.Sprintf("@%s %s", message.Chat.UserName, message.Text)
-			if err := h.sendMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, forwardMsg); err != nil {
+			if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, message); err != nil {
 				log.Println(err)
 			}
 			h.toFreshcoffSelection(chatID, message)
 			h.stateManager.SetContext(chatID, "is_work", "1")
 		case "Окончил смену":
-			forwardMsg := fmt.Sprintf("@%s %s", message.Chat.UserName, message.Text)
-			if err := h.sendMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, forwardMsg); err != nil {
+			if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WorkHoursTopicID, message); err != nil {
 				log.Println(err)
 			}
 			h.toFreshcoffSelection(chatID, message)
@@ -403,32 +404,39 @@ func (h *Handler) handleWorkSchedule(chatID int64, message *tgbotapi.Message) {
 	}
 }
 
-func (h *Handler) sendMsgInTopic(chatID, themeID int64, msg string) error {
-	type sendMessageRequest struct {
-		ChatID          int64  `json:"chat_id"`
-		MessageThreadID int64  `json:"message_thread_id"`
-		Text            string `json:"text"`
+func (h *Handler) forwardMsgInTopic(chatID, themeID int64, message *tgbotapi.Message) error {
+	// Проверяем, есть ли последнее сообщение пользователя
+	if message == nil || message.Chat == nil || message.Chat.ID == 0 {
+		return fmt.Errorf("нет доступного сообщения для пересылки")
 	}
 
-	reqBody := sendMessageRequest{
-		ChatID:          chatID,
-		MessageThreadID: themeID,
-		Text:            msg,
-	}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request body: %w", err)
+	// Формируем параметры запроса
+	params := map[string]interface{}{
+		"chat_id":              chatID,
+		"from_chat_id":         message.Chat.ID,
+		"message_id":           message.MessageID,
+		"message_thread_id":    themeID,
+		"disable_notification": false,
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", h.bot.Token)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
+	// Сериализуем параметры в JSON
+	jsonBody, err := json.Marshal(params)
 	if err != nil {
-		return fmt.Errorf("failed to send HTTP request: %w", err)
+		return fmt.Errorf("ошибка сериализации параметров: %v", err)
+	}
+
+	// Создаем HTTP-запрос
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/forwardMessage", h.config.Token)
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("ошибка HTTP-запроса: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// Проверяем ответ
+	body, _ := ioutil.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to send message, status: %d", resp.StatusCode)
+		return fmt.Errorf("ошибка Telegram API (%d): %s", resp.StatusCode, string(body))
 	}
 
 	return nil
@@ -459,7 +467,14 @@ func (h *Handler) handleWriteOff(chatID int64, message *tgbotapi.Message) {
 
 		switch message.Text {
 		case "Заготовка":
+			fallthrough
 		case "Продукт":
+			h.bot.Send(tgbotapi.NewMessage(message.Chat.ID, "Что списываем? Отправьте фото и объясните причину"))
+			if message.Text != "Заготовка" && message.Text != "Продукт" {
+				if err := h.forwardMsgInTopic(h.config.Kapibara.GroupChatID, h.config.Kapibara.WriteoffTopicID, message); err != nil {
+					log.Println(err)
+				}
+			}
 		case "Назад":
 			h.toRogachevSelection(chatID, message)
 		}
@@ -482,7 +497,14 @@ func (h *Handler) handleWriteOff(chatID int64, message *tgbotapi.Message) {
 
 		switch message.Text {
 		case "Заготовка":
+			fallthrough
 		case "Продукт":
+			h.bot.Send(tgbotapi.NewMessage(message.Chat.ID, "Что списываем? Отправьте фото и объясните причину"))
+			if message.Text != "Заготовка" && message.Text != "Продукт" {
+				if err := h.forwardMsgInTopic(h.config.Kapibara.GroupChatID, h.config.Kapibara.WriteoffTopicID, message); err != nil {
+					log.Println(err)
+				}
+			}
 		case "Назад":
 			h.toRechicaSelection(chatID, message)
 		}
@@ -505,11 +527,30 @@ func (h *Handler) handleWriteOff(chatID int64, message *tgbotapi.Message) {
 
 		switch message.Text {
 		case "Заготовка":
+			fallthrough
 		case "Продукт":
+			h.bot.Send(tgbotapi.NewMessage(message.Chat.ID, "Что списываем? Отправьте фото и объясните причину"))
+			if message.Text != "Заготовка" && message.Text != "Продукт" {
+				if err := h.forwardMsgInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WriteoffTopicID, message); err != nil {
+					log.Println(err)
+				}
+			}
 		case "Назад":
 			h.toFreshcoffSelection(chatID, message)
 		}
 
 	}
+}
 
+func (h *Handler) handleRequestSubmission(chatID int64, msg *tgbotapi.Message) {
+	h.stateManager.SetState(chatID, state.RequestSubmission)
+	restaraunt, err := h.stateManager.GetContext(chatID, "restaraunt")
+	if err != nil {
+		log.Println(err)
+	}
+	switch restaraunt {
+	case "rogachev":
+	case "rechica":
+	case "freshcoff":
+	}
 }
