@@ -40,6 +40,12 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		}
 	}
 
+	if userState.Current == state.SurveyInProgress {
+		// Обрабатываем ответ в опросе
+		h.handleSurveyResponse(chatID, update.Message)
+		return
+	}
+
 	switch userState.Current {
 	case state.Idle:
 		h.handleIdle(chatID)
@@ -55,7 +61,10 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		h.handleWorkSchedule(chatID, update.Message)
 	case state.WriteOff:
 		h.handleWriteOff(chatID, update.Message)
-	case state.RequestSubmission: h.handleRequestSubmission(chatID, update.Message)
+	case state.RequestSubmission:
+		h.handleRequestSubmission(chatID, update.Message)
+	case state.SurveyInProgress:
+		h.requestSubmissionFreshcoff(chatID, update.Message)
 	}
 }
 
@@ -550,7 +559,28 @@ func (h *Handler) handleRequestSubmission(chatID int64, msg *tgbotapi.Message) {
 	}
 	switch restaraunt {
 	case "rogachev":
+		fallthrough
 	case "rechica":
+		msg := tgbotapi.NewMessage(chatID, "Кто вы?")
+		keyboard := tgbotapi.NewReplyKeyboard(
+			tgbotapi.NewKeyboardButtonRow(
+				tgbotapi.NewKeyboardButton("Повар"),
+			),
+			tgbotapi.NewKeyboardButtonRow(
+				tgbotapi.NewKeyboardButton("Кассир"),
+			),
+		)
+		msg.ReplyMarkup = keyboard
+		h.bot.Send(msg)
+
+		switch msg.Text {
+		case "Повар":
+			//h.requestSubmission(chatID, msg, h.products.Kapibara.Cook)
+		case "Кассир":
+			//h.requestSubmission(chatID, msg, h.products.Kapibara.Cashier)
+		}
+
 	case "freshcoff":
+		h.requestSubmissionFreshcoff(chatID, msg)
 	}
 }

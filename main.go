@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DEBUG = true
+	DEBUG = false
 )
 
 func main() {
