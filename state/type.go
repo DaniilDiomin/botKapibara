@@ -15,7 +15,8 @@ const (
 	WorkSchedule      //Учет рабочего времени
 	WriteOff          //Списание товаров
 
-	SurveyInProgress State = iota + 10
+	SurveyInProgress
+	RoleSelection
 )
 
 type stateStruct struct {

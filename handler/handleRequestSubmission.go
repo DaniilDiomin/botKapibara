@@ -11,29 +11,57 @@ import (
 	"log"
 	"net/http"
 	"sort"
-	"strconv"
-	"strings"
 )
 
 // Структура для хранения состояния опроса
 type surveyState struct {
-	Categories   []string
-	CurrentIndex int // Единый индекс для всех товаров
+	AllProducts []struct {
+		Category string
+		Product  products.ProductItem
+	}
+	CurrentIndex int
 }
 
-func (h *Handler) requestSubmissionFreshcoff(chatID int64, msg *tgbotapi.Message) {
-	log.Printf("[requestSubmissionFreshcoff] Начало опроса для chatID: %d", chatID)
+func (h *Handler) handleRoleSelection(chatID int64, msg *tgbotapi.Message) {
+	restaraunt, err := h.stateManager.GetContext(chatID, "pending_restaurant")
+	if err != nil {
+		h.bot.Send(tgbotapi.NewMessage(chatID, "Ошибка: не выбран ресторан"))
+		h.stateManager.SetState(chatID, states.Idle)
+		return
+	}
+
+	switch msg.Text {
+	case "Повар":
+		switch restaraunt {
+		case "rogachev":
+			h.startSurvey(chatID, h.products.Kapibara.Cook, restaraunt, "cook")
+		case "rechica":
+			h.startSurvey(chatID, h.products.Kapibara.Cook, restaraunt, "cook")
+		}
+	case "Кассир":
+		switch restaraunt {
+		case "rogachev":
+			h.startSurvey(chatID, h.products.Kapibara.Cashier, restaraunt, "cashier")
+		case "rechica":
+			h.startSurvey(chatID, h.products.Kapibara.Cashier, restaraunt, "cashier")
+		}
+	default:
+		h.bot.Send(tgbotapi.NewMessage(chatID, "Пожалуйста, выберите роль из предложенных"))
+	}
+}
+
+func (h *Handler) startSurvey(chatID int64, productsMap map[string][]products.ProductItem, restaurant, role string) {
+	log.Printf("[startSurvey] Начало опроса для chatID: %d, ресторан: %s, роль: %s", chatID, restaurant, role)
 
 	// Проверяем наличие данных о товарах
-	if h.products == nil || h.products.Fresfcoff == nil || h.products.Fresfcoff.Products == nil {
+	if productsMap == nil {
 		h.bot.Send(tgbotapi.NewMessage(chatID, "Нет данных о товарах"))
-		log.Printf("[requestSubmissionFreshcoff] Ошибка: нет данных о товарах")
 		return
 	}
 
 	// Собираем только непустые категории
 	categories := make([]string, 0)
-	for cat, items := range h.products.Fresfcoff.Products {
+	for cat, items := range productsMap {
 		if len(items) > 0 {
 			categories = append(categories, cat)
 		}
@@ -42,34 +70,36 @@ func (h *Handler) requestSubmissionFreshcoff(chatID int64, msg *tgbotapi.Message
 
 	if len(categories) == 0 {
 		h.bot.Send(tgbotapi.NewMessage(chatID, "Нет доступных товаров"))
-		log.Printf("[requestSubmissionFreshcoff] Ошибка: нет доступных товаров")
 		return
 	}
 
+	// Формируем плоский список всех товаров
+	allProducts := h.getAllProducts(categories, productsMap)
+	log.Printf("[startSurvey] Всего товаров: %d", len(allProducts))
+
 	// Создаем начальное состояние опроса
 	state := surveyState{
-		Categories:   categories,
+		AllProducts:  allProducts,
 		CurrentIndex: 0,
 	}
 
 	// Сохраняем состояние
 	h.stateManager.SetContext(chatID, "survey_state", h.serializeSurveyState(state))
+	h.stateManager.SetContext(chatID, "survey_restaurant", restaurant)
+	h.stateManager.SetContext(chatID, "survey_role", role)
 	h.stateManager.SetState(chatID, states.SurveyInProgress)
-	log.Printf("[requestSubmissionFreshcoff] Состояние сохранено: %s", h.serializeSurveyState(state))
+	log.Printf("[startSurvey] Состояние сохранено")
 
 	// Отправляем первый вопрос
 	h.sendNextQuestion(chatID, state)
 }
 
 func (h *Handler) sendNextQuestion(chatID int64, state surveyState) {
-	log.Printf("[sendNextQuestion] Отправка вопроса для chatID: %d, индекс: %d", chatID, state.CurrentIndex)
-
-	// Получаем все товары в плоском списке
-	allProducts := h.getAllProducts(state.Categories)
-	log.Printf("[sendNextQuestion] Всего товаров: %d", len(allProducts))
+	log.Printf("[sendNextQuestion] Отправка вопроса для chatID: %d, индекс: %d/%d",
+		chatID, state.CurrentIndex, len(state.AllProducts))
 
 	// Проверяем, не закончились ли товары
-	if state.CurrentIndex >= len(allProducts) {
+	if state.CurrentIndex >= len(state.AllProducts) {
 		h.bot.Send(tgbotapi.NewMessage(chatID, "Опрос завершен!"))
 		h.stateManager.SetState(chatID, states.Idle)
 		h.stateManager.SetContext(chatID, "survey_state", "")
@@ -78,7 +108,7 @@ func (h *Handler) sendNextQuestion(chatID int64, state surveyState) {
 	}
 
 	// Получаем текущий товар
-	current := allProducts[state.CurrentIndex]
+	current := state.AllProducts[state.CurrentIndex]
 	log.Printf("[sendNextQuestion] Текущий товар: %s - %s", current.Category, current.Product.Name)
 
 	// Создаем временный update для клавиатуры
@@ -125,7 +155,7 @@ func (h *Handler) createKeyboard(bot *tgbotapi.BotAPI, update *tgbotapi.Update, 
 	replyKeyboard.OneTimeKeyboard = true // Автоматическое скрытие после выбора
 
 	// Настраиваем сообщение с клавиатурой
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text+":")
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
 	msg.ReplyMarkup = replyKeyboard
 
 	// Отправляем сообщение с клавиатурой
@@ -146,41 +176,46 @@ func (h *Handler) handleSurveyResponse(chatID int64, msg *tgbotapi.Message) {
 		h.stateManager.SetState(chatID, states.Idle)
 		return
 	}
-	log.Printf("[handleSurveyResponse] Текущее состояние: %s", h.serializeSurveyState(state))
-
-	// Получаем все товары в плоском списке
-	allProducts := h.getAllProducts(state.Categories)
-	log.Printf("[handleSurveyResponse] Всего товаров: %d", len(allProducts))
+	log.Printf("[handleSurveyResponse] Текущий индекс: %d/%d", state.CurrentIndex, len(state.AllProducts))
 
 	// Проверяем, не закончились ли товары
-	if state.CurrentIndex >= len(allProducts) {
+	if state.CurrentIndex >= len(state.AllProducts) {
 		h.bot.Send(tgbotapi.NewMessage(chatID, "Опрос завершен!"))
-		h.stateManager.SetState(chatID, states.FreshcoffSelection)
+		h.stateManager.SetState(chatID, states.Idle)
 		h.stateManager.SetContext(chatID, "survey_state", "")
 		log.Printf("[handleSurveyResponse] Опрос завершен для chatID: %d", chatID)
-		h.toFreshcoffSelection(chatID, msg)
 		return
 	}
 
 	// Получаем текущий товар
-	current := allProducts[state.CurrentIndex]
+	current := state.AllProducts[state.CurrentIndex]
 	log.Printf("[handleSurveyResponse] Обработка товара: %s - %s", current.Category, current.Product.Name)
 
 	// Обрабатываем ответ (если не "Пропустить")
 	if msg.Text != "Пропустить" {
-		messageText := fmt.Sprintf("%s - %s", current.Product.Name, msg.Text)
+		// Получаем ресторан и роль для форматирования сообщения
+		restaurant, _ := h.stateManager.GetContext(chatID, "survey_restaurant")
+		role, _ := h.stateManager.GetContext(chatID, "survey_role")
+
+		// Форматируем сообщение в зависимости от ресторана
+		messageText := fmt.Sprintf("%s: %s %s", restaurant, current.Category, current.Product.Name)
+		if role != "" {
+			messageText = fmt.Sprintf("%s - %s", current.Category, current.Product.Name)
+		}
+		messageText += " " + msg.Text
+
 		log.Printf("[handleSurveyResponse] Отправка в группу: %s", messageText)
-		if err := h.sendTextInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.ProcurementTopicID, messageText); err != nil {
+		if err := h.sendTextInTopic(h.config.Freshkof.GroupChatID, h.config.Freshkof.WriteoffTopicID, messageText); err != nil {
 			log.Printf("[handleSurveyResponse] Ошибка отправки в группу: %v", err)
 		}
 	}
 
 	// Увеличиваем индекс
 	newState := surveyState{
-		Categories:   state.Categories,
+		AllProducts:  state.AllProducts,
 		CurrentIndex: state.CurrentIndex + 1,
 	}
-	log.Printf("[handleSurveyResponse] Новое состояние: %s", h.serializeSurveyState(newState))
+	log.Printf("[handleSurveyResponse] Новый индекс: %d", newState.CurrentIndex)
 
 	// Сохраняем новое состояние
 	h.stateManager.SetContext(chatID, "survey_state", h.serializeSurveyState(newState))
@@ -189,7 +224,7 @@ func (h *Handler) handleSurveyResponse(chatID int64, msg *tgbotapi.Message) {
 	h.sendNextQuestion(chatID, newState)
 }
 
-func (h *Handler) getAllProducts(categories []string) []struct {
+func (h *Handler) getAllProducts(categories []string, productsMap map[string][]products.ProductItem) []struct {
 	Category string
 	Product  products.ProductItem
 } {
@@ -199,7 +234,7 @@ func (h *Handler) getAllProducts(categories []string) []struct {
 	}
 
 	for _, cat := range categories {
-		productsInCat := h.products.Fresfcoff.Products[cat]
+		productsInCat := productsMap[cat]
 		for _, prod := range productsInCat {
 			allProducts = append(allProducts, struct {
 				Category string
@@ -212,26 +247,21 @@ func (h *Handler) getAllProducts(categories []string) []struct {
 
 // Сериализует состояние опроса в строку
 func (h *Handler) serializeSurveyState(state surveyState) string {
-	return fmt.Sprintf("%s|%d", strings.Join(state.Categories, ","), state.CurrentIndex)
+	bytes, err := json.Marshal(state)
+	if err != nil {
+		log.Printf("Ошибка сериализации состояния: %v", err)
+		return ""
+	}
+	return string(bytes)
 }
 
 // Десериализует состояние опроса из строки
 func (h *Handler) deserializeSurveyState(data string) (surveyState, error) {
-	parts := strings.Split(data, "|")
-	if len(parts) < 2 {
-		return surveyState{}, fmt.Errorf("неверный формат состояния: %s", data)
+	var state surveyState
+	if err := json.Unmarshal([]byte(data), &state); err != nil {
+		return surveyState{}, fmt.Errorf("ошибка десериализации: %v", err)
 	}
-
-	categories := strings.Split(parts[0], ",")
-	index, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return surveyState{}, fmt.Errorf("ошибка преобразования индекса: %v", err)
-	}
-
-	return surveyState{
-		Categories:   categories,
-		CurrentIndex: index,
-	}, nil
+	return state, nil
 }
 
 // Получает состояние опроса из StateManager
@@ -240,13 +270,7 @@ func (h *Handler) getSurveyState(chatID int64) (surveyState, error) {
 	if err != nil {
 		return surveyState{}, fmt.Errorf("состояние опроса не найдено: %v", err)
 	}
-
-	state, err := h.deserializeSurveyState(stateStr)
-	if err != nil {
-		return surveyState{}, fmt.Errorf("ошибка десериализации: %v", err)
-	}
-
-	return state, nil
+	return h.deserializeSurveyState(stateStr)
 }
 
 // Функция отправки текста в топик

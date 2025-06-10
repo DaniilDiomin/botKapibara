@@ -61,10 +61,12 @@ func (h *Handler) HandleUpdate(update tgbotapi.Update) {
 		h.handleWorkSchedule(chatID, update.Message)
 	case state.WriteOff:
 		h.handleWriteOff(chatID, update.Message)
+	case state.SurveyInProgress:
+		h.handleSurveyResponse(chatID, update.Message)
+	case state.RoleSelection:
+		h.handleRoleSelection(chatID, update.Message)
 	case state.RequestSubmission:
 		h.handleRequestSubmission(chatID, update.Message)
-	case state.SurveyInProgress:
-		h.requestSubmissionFreshcoff(chatID, update.Message)
 	}
 }
 
@@ -556,11 +558,12 @@ func (h *Handler) handleRequestSubmission(chatID int64, msg *tgbotapi.Message) {
 	restaraunt, err := h.stateManager.GetContext(chatID, "restaraunt")
 	if err != nil {
 		log.Println(err)
+		h.bot.Send(tgbotapi.NewMessage(chatID, "Ошибка определения ресторана"))
+		return
 	}
+
 	switch restaraunt {
-	case "rogachev":
-		fallthrough
-	case "rechica":
+	case "rogachev", "rechica":
 		msg := tgbotapi.NewMessage(chatID, "Кто вы?")
 		keyboard := tgbotapi.NewReplyKeyboard(
 			tgbotapi.NewKeyboardButtonRow(
@@ -573,14 +576,11 @@ func (h *Handler) handleRequestSubmission(chatID int64, msg *tgbotapi.Message) {
 		msg.ReplyMarkup = keyboard
 		h.bot.Send(msg)
 
-		switch msg.Text {
-		case "Повар":
-			//h.requestSubmission(chatID, msg, h.products.Kapibara.Cook)
-		case "Кассир":
-			//h.requestSubmission(chatID, msg, h.products.Kapibara.Cashier)
-		}
+		// Сохраняем состояние выбора роли
+		h.stateManager.SetState(chatID, state.RoleSelection)
+		h.stateManager.SetContext(chatID, "pending_restaurant", restaraunt)
 
 	case "freshcoff":
-		h.requestSubmissionFreshcoff(chatID, msg)
+		h.startSurvey(chatID, h.products.Fresfcoff.Products, "freshcoff", "")
 	}
 }
